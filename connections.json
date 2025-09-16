@@ -1,0 +1,16 @@
+{
+  "Tutte": [],
+  "Test": [
+    {
+      "name": "mio pc aziendale",
+      "host": "LT0372005",
+      "port": 5900,
+      "protocol": "VNC"
+    }
+  ],
+  "NEF": [],
+  "PONTI": [],
+  "CAMBI": [],
+  "ELETTRICO": [],
+  "INDUSTRIALI": []
+}

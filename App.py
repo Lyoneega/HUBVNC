@@ -3,6 +3,7 @@
 # Extra: default password VNC "500rossa" nelle nuove connessioni VNC, ping silenzioso (niente finestre nere),
 # autostart TightVNC all'avvio dell'app, e AUTO-AVVIO dell'APP a login Windows (menu Impostazioni → Configurazione…).
 # Nota: la password delle connessioni VNC è salvata in chiaro nel connections.json per semplicità.
+VERSION = "1.1.0"   # aggiorna ad ogni release
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog

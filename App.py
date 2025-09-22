@@ -3,13 +3,19 @@
 # Extra: default password VNC "500rossa" nelle nuove connessioni VNC, ping silenzioso (niente finestre nere),
 # autostart TightVNC all'avvio dell'app, e AUTO-AVVIO dell'APP a login Windows (menu Impostazioni → Configurazione…).
 # Nota: la password delle connessioni VNC è salvata in chiaro nel connections.json per semplicità.
-VERSION = "1.1.0"   # aggiorna ad ogni release
+# + Aggiornamento: Verifica aggiornamenti da GitHub con auto-update (solo versione script).
+
+VERSION = "1.2.0"   # aggiorna ad ogni release
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import subprocess, os, sys, json, shutil, platform, getpass, socket
-import threading, time
+import threading, time, webbrowser, tempfile
 from datetime import datetime
+
+# Networking per "Check for updates"
+import ssl
+import urllib.request, urllib.error
 
 # opzionali (Windows)
 try:
@@ -26,6 +32,15 @@ except Exception:
 RESET_ON_START = ("--reset" in sys.argv)
 ALLOW_IMPORT_FROM_EXE = False
 AUTOSTART_VNC_ON_LAUNCH = True  # avvia TightVNC server all'apertura dell'app
+
+# Config GitHub per aggiornamenti
+GITHUB_REPO = "Lyoneega/HUBVNC"   # <owner>/<repo>
+RAW_BRANCH = "main"                # branch dove sta il file principale
+RAW_FILENAME = os.path.basename(__file__) if not getattr(sys, "frozen", False) else "App.py"
+VERSION_FILE_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{RAW_BRANCH}/VERSION.txt"
+RAW_SCRIPT_URL  = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{RAW_BRANCH}/{RAW_FILENAME}"
+LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+REPO_RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -473,6 +488,151 @@ def reset_connections():
     refresh_sections_tree(); refresh_connections()
     messagebox.showinfo("Reimpostato","Connessioni azzerate."); log("Connections reset to defaults")
 
+# ───────── Check for updates (GitHub) ─────────
+def _parse_version(v: str):
+    v = (v or "").strip().lstrip("vV")
+    parts = []
+    for p in v.split("."):
+        try:
+            parts.append(int("".join(ch for ch in p if ch.isdigit())))
+        except Exception:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+def _http_get(url: str, timeout=10, accept="*/*"):
+    ctx = ssl.create_default_context()
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "HubVNC-Updater",
+        "Accept": accept
+    })
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        return r.read()
+
+def _get_latest_version_from_version_file():
+    try:
+        data = _http_get(VERSION_FILE_URL, accept="text/plain")
+        return (data.decode("utf-8", "ignore").strip() or "").splitlines()[0].strip()
+    except Exception:
+        return None
+
+def _get_latest_release_via_api():
+    try:
+        data = _http_get(LATEST_RELEASE_API, accept="application/json")
+        j = json.loads(data.decode("utf-8", "ignore"))
+        tag = j.get("tag_name") or j.get("name") or ""
+        assets = j.get("assets") or []
+        # prova a cercare un eseguibile .exe tra gli asset
+        exe_url = None
+        for a in assets:
+            url = a.get("browser_download_url") or ""
+            name = (a.get("name") or "").lower()
+            if name.endswith(".exe") or name.endswith(".msi"):
+                exe_url = url
+                break
+        return tag, exe_url
+    except Exception:
+        return None, None
+
+def _self_update_script(new_text: str):
+    """Sostituisce il file sorgente corrente con il testo nuovo, creando un .bak, poi propone riavvio."""
+    try:
+        current = os.path.abspath(__file__)
+        bak = current + ".bak"
+        with open(bak, "w", encoding="utf-8") as f:
+            with open(current, "r", encoding="utf-8", errors="ignore") as oldf:
+                f.write(oldf.read())
+        with open(current, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        return True, bak
+    except Exception as e:
+        return False, str(e)
+
+def check_for_updates():
+    # Finestra di progresso
+    prog = tk.Toplevel(root)
+    prog.title("Verifica aggiornamenti…")
+    prog.resizable(False, False)
+    frm = ttk.Frame(prog, padding=12); frm.pack(fill="both", expand=True)
+    ttk.Label(frm, text=f"Versione attuale: {VERSION}\nControllo su GitHub…").pack(pady=(2,8))
+    bar = ttk.Progressbar(frm, mode="indeterminate", length=280); bar.pack(); bar.start(10)
+    btn_box = ttk.Frame(frm); btn_box.pack(fill="x", pady=(8,0))
+    ttk.Button(btn_box, text="Chiudi", command=prog.destroy).pack(side="right")
+    prog.transient(root)
+    try: prog.attributes("-topmost", True)
+    except Exception: pass
+    prog.grab_set()
+
+    def finish_ok(msg):
+        try:
+            bar.stop(); prog.destroy()
+        except Exception:
+            pass
+        messagebox.showinfo("Aggiornamenti", msg)
+
+    def finish_err(msg):
+        try:
+            bar.stop(); prog.destroy()
+        except Exception:
+            pass
+        messagebox.showerror("Aggiornamenti", msg)
+
+    def worker():
+        try:
+            # 1) Prova prima con VERSION.txt (semplice)
+            latest = _get_latest_version_from_version_file()
+            exe_url = None
+            if not latest:
+                # 2) fallback API releases
+                latest, exe_url = _get_latest_release_via_api()
+            if not latest:
+                root.after(0, lambda: finish_err("Impossibile recuperare la versione più recente."))
+                return
+
+            cur = _parse_version(VERSION)
+            new = _parse_version(latest)
+            if new <= cur:
+                root.after(0, lambda: finish_ok(f"Hai già l'ultima versione ({VERSION})."))
+                return
+
+            # C'è un aggiornamento!
+            if getattr(sys, "frozen", False):
+                # App impacchettata: apri la pagina delle release o asset .exe se trovato
+                def _ask_open():
+                    if exe_url:
+                        if messagebox.askyesno("Nuova versione disponibile",
+                            f"Trovata versione {latest}.\nVuoi aprire il download dell'installer?"):
+                            webbrowser.open(exe_url)
+                    else:
+                        if messagebox.askyesno("Nuova versione disponibile",
+                            f"Trovata versione {latest}.\nVuoi aprire la pagina delle release?"):
+                            webbrowser.open(REPO_RELEASES_PAGE)
+                root.after(0, _ask_open)
+            else:
+                # Script Python: scarica il nuovo HubVNC.py dal branch
+                def _do_script_update():
+                    try:
+                        data = _http_get(RAW_SCRIPT_URL, accept="text/plain")
+                        text = data.decode("utf-8", "ignore")
+                        ok, info = _self_update_script(text)
+                        if ok:
+                            messagebox.showinfo("Aggiornamento completato",
+                                f"Aggiornato a {latest}.\nBackup creato: {info}\nRiavvia l'app per applicare le modifiche.")
+                        else:
+                            messagebox.showerror("Errore aggiornamento", f"Impossibile aggiornare il file:\n{info}")
+                    except Exception as e:
+                        messagebox.showerror("Errore aggiornamento", f"Download fallito:\n{e}")
+                def _ask_update():
+                    if messagebox.askyesno("Nuova versione disponibile",
+                            f"Trovata versione {latest}.\nVuoi aggiornare automaticamente questo script?"):
+                        _do_script_update()
+                root.after(0, _ask_update)
+        except Exception as e:
+            root.after(0, lambda: finish_err(f"Errore durante il controllo aggiornamenti:\n{e}"))
+
+    threading.Thread(target=worker, daemon=True).start()
+
 def open_settings_dialog():
     dlg = tk.Toplevel(root); dlg.title("Configurazione"); dlg.resizable(False, False)
     frm = ttk.Frame(dlg, padding=12); frm.pack(fill="both", expand=True)
@@ -499,6 +659,9 @@ def open_settings_dialog():
 
     ttk.Button(frm, text="Imposta Password Admin…", command=set_admin_password).grid(row=2, column=0, sticky="w", pady=(0,8))
 
+    # Verifica aggiornamenti
+    ttk.Button(frm, text="Verifica aggiornamenti…", command=check_for_updates).grid(row=3, column=0, sticky="w", pady=(0,8))
+
     btns = ttk.Frame(frm); btns.grid(row=10, column=0, sticky="e", pady=(10,0))
     def do_ok():
         want = autostart_var.get()
@@ -517,6 +680,7 @@ def open_settings_dialog():
 
 # Voci menu impostazioni classiche
 settings_menu.add_command(label="Configurazione…", command=open_settings_dialog)
+settings_menu.add_command(label="Verifica aggiornamenti…", command=check_for_updates)
 settings_menu.add_separator()
 settings_menu.add_command(label="Importa…", command=import_connections)
 settings_menu.add_command(label="Esporta…", command=export_connections)
@@ -1442,3 +1606,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

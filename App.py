@@ -34,7 +34,7 @@ ALLOW_IMPORT_FROM_EXE = False
 AUTOSTART_VNC_ON_LAUNCH = True  # avvia TightVNC server all'apertura dell'app
 
 # Config GitHub per aggiornamenti
-GITHUB_REPO = "Lyoneega/HUBVNC"   # <owner>/<repo>
+GITHUB_REPO = "Lyoneega/HubVNC"   # <owner>/<repo>
 RAW_BRANCH = "main"                # branch dove sta il file principale
 RAW_FILENAME = os.path.basename(__file__) if not getattr(sys, "frozen", False) else "App.py"
 VERSION_FILE_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{RAW_BRANCH}/VERSION.txt"

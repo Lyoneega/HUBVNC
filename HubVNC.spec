@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = ['Crypto']
+hiddenimports = ['requests']
 hiddenimports += collect_submodules('Crypto')
 
 
